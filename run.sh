@@ -3,4 +3,4 @@
 set -euo pipefail
 
 cd rust/
-cargo run contained -- "$@"
+exec cargo run contained -- "$@"
