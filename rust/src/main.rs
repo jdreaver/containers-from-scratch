@@ -17,7 +17,7 @@ fn main() {
     let cli = Cli::parse();
 
     // Spawn a new process using the clone3 syscall
-    let flags = libc::CLONE_NEWUTS | libc::CLONE_NEWPID | libc::CLONE_NEWNS; // | libc::CLONE_NEWNET;
+    let flags = libc::CLONE_NEWUTS | libc::CLONE_NEWPID | libc::CLONE_NEWNS | libc::CLONE_NEWNET;
     let mut args = CloneArgs {
         flags: flags as u64,
         pidfd: 0,
@@ -43,6 +43,9 @@ fn main() {
         Ok(pid) => {
             // We are in the parent process
             println!("Spawned child process with PID: {}", pid);
+
+            // Set up networking
+            set_up_networking(pid);
 
             // Wait on the child process
             let mut status: i32 = 0;
@@ -199,4 +202,42 @@ fn pivot_root_chroot(new_root: PathBuf) -> i32 {
 
     std::fs::remove_dir(".old_root").expect("failed to remove .old_root");
     0
+}
+
+fn set_up_networking(child_pid: usize) {
+    // N.B. This is done with bash so we can use the `ip` command. We could use
+    // syscalls and libc, but that is very verbose.
+
+    let veth_host = "veth0";
+    let veth_child = "veth1";
+
+    let setup_script = format!(
+        r#"
+        # Create the veth pair
+        ip link add {veth_host} type veth peer name {veth_child}
+
+        # Move one end of the veth pair to the namespace of the given PID
+        ip link set {veth_child} netns "{child_pid}"
+
+        # Bring up the veth interfaces
+        ip link set {veth_host} up
+        nsenter --net=/proc/{child_pid}/ns/net ip link set {veth_child} up
+
+        # Assign IP addresses (optional)
+        ip addr add 192.168.1.1/24 dev {veth_host}
+        nsenter --net=/proc/{child_pid}/ns/net ip addr add 192.168.1.2/24 dev {veth_child}
+        "#
+    );
+
+    println!("[host] Setting up networking...");
+
+    let result = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(&setup_script)
+        .status()
+        .expect("failed to run setup script");
+
+    if !result.success() {
+        println!("Error setting up networking: {:?}", result);
+    }
 }
