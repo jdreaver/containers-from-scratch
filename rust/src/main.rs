@@ -74,78 +74,11 @@ struct CloneArgs {
 fn child_fn(mount_root: PathBuf) -> i32 {
     println!("Running shell inside container...");
 
-    // Ensure current root filesystem doesn't have shared propagation
-    let result = unsafe {
-        libc::mount(
-            std::ptr::null(),
-            c"/".as_ptr(),
-            std::ptr::null(),
-            libc::MS_REC | libc::MS_PRIVATE,
-            std::ptr::null(),
-        )
-    };
-    if result < 0 {
-        println!(
-            "Error setting root filesystem to private
-                {:?}",
-            std::io::Error::last_os_error()
-        );
+    // Mount the root filesystem
+    let result = pivot_root_chroot(mount_root);
+    if result != 0 {
         return result;
     }
-
-    // Bind mount the root filesystem
-    let mount_root_ptr = mount_root.as_os_str().as_bytes().as_ptr() as *const i8;
-    let fstype = c"none".as_ptr();
-    let flags = libc::MS_BIND | libc::MS_REC;
-    let data = std::ptr::null();
-    let result = unsafe { libc::mount(mount_root_ptr, mount_root_ptr, fstype, flags, data) };
-    if result < 0 {
-        println!(
-            "Error bind mounting root filesystem {:?}: {:?}",
-            mount_root,
-            std::io::Error::last_os_error()
-        );
-        return result;
-    }
-
-    // Create a directory for the old root inside the new root (for pivot_root)
-    let old_root_path = std::path::Path::new(&mount_root).join(".old_root");
-    let old_root_path = old_root_path
-        .to_str()
-        .expect("failed to create .old_root path");
-    std::fs::create_dir_all(old_root_path).expect("failed to create .old_root");
-
-    // Change working directory to the new root
-    std::env::set_current_dir(&mount_root).expect("failed to change working directory");
-
-    // Call pivot_root to switch to the new root
-    let old_root_cstr =
-        CString::new(old_root_path).expect("failed to convert .old_root path to CString");
-
-    let result = unsafe {
-        let put_old = old_root_cstr.as_ptr();
-        syscall!(Sysno::pivot_root, mount_root_ptr, put_old)
-    };
-    if let Err(err) = result {
-        println!("Error calling pivot_root: {:?}", err);
-        return err.into_raw();
-    }
-
-    // Change working directory to / in the new root
-    std::env::set_current_dir("/").expect("failed to change working directory");
-
-    // Unmount the old root and remove the directory
-    let result = unsafe {
-        let target = c".old_root".as_ptr();
-        let flags = libc::MNT_DETACH;
-        syscall!(Sysno::umount2, target, flags)
-    };
-    if let Err(err) = result {
-        println!("Error unmounting old root: {:?}", err);
-        return err.into_raw();
-    }
-
-    std::fs::remove_dir(".old_root").expect("failed to remove .old_root");
 
     // Mount /proc, which is not shared with the host
     let src = c"proc".as_ptr();
@@ -153,11 +86,12 @@ fn child_fn(mount_root: PathBuf) -> i32 {
     let fstype = c"proc".as_ptr();
     let flags = 0;
     let data = std::ptr::null();
-    let result = unsafe {
-        libc::mount(src, target, fstype, flags, data)
-    };
+    let result = unsafe { libc::mount(src, target, fstype, flags, data) };
     if result < 0 {
-        println!("Error mounting /proc: {:?}", std::io::Error::last_os_error());
+        println!(
+            "Error mounting /proc: {:?}",
+            std::io::Error::last_os_error()
+        );
         return result;
     }
 
@@ -179,5 +113,90 @@ fn child_fn(mount_root: PathBuf) -> i32 {
         println!("Error running shell: {:?}", err);
         return err.into_raw();
     }
+    0
+}
+
+/// We can't use chroot to sandbox the filesystem. The man page specifically says:
+///
+/// > This call changes an ingredient in the pathname resolution process and
+/// > does nothing else. In particular, it is not intended to be used for any kind
+/// > of security purpose, neither to fully sandbox a process nor to restrict
+/// > filesystem system calls.
+///
+/// Therefore, we use the pivot_root syscall (and some ceremony around it) to
+/// change the container's root directory.
+fn pivot_root_chroot(new_root: PathBuf) -> i32 {
+    // Ensure current root filesystem doesn't have shared propagation
+    let result = unsafe {
+        libc::mount(
+            std::ptr::null(),
+            c"/".as_ptr(),
+            std::ptr::null(),
+            libc::MS_REC | libc::MS_PRIVATE,
+            std::ptr::null(),
+        )
+    };
+    if result < 0 {
+        println!(
+            "Error setting root filesystem to private
+                {:?}",
+            std::io::Error::last_os_error()
+        );
+        return result;
+    }
+
+    // Bind mount the root filesystem
+    let new_root_ptr = new_root.as_os_str().as_bytes().as_ptr() as *const i8;
+    let fstype = c"none".as_ptr();
+    let flags = libc::MS_BIND | libc::MS_REC;
+    let data = std::ptr::null();
+    let result = unsafe { libc::mount(new_root_ptr, new_root_ptr, fstype, flags, data) };
+    if result < 0 {
+        println!(
+            "Error bind mounting root filesystem {:?}: {:?}",
+            new_root,
+            std::io::Error::last_os_error()
+        );
+        return result;
+    }
+
+    // Create a directory for the old root inside the new root (for pivot_root)
+    let old_root_path = std::path::Path::new(&new_root).join(".old_root");
+    let old_root_path = old_root_path
+        .to_str()
+        .expect("failed to create .old_root path");
+    std::fs::create_dir_all(old_root_path).expect("failed to create .old_root");
+
+    // Change working directory to the new root
+    std::env::set_current_dir(&new_root).expect("failed to change working directory");
+
+    // Call pivot_root to switch to the new root
+    let old_root_cstr =
+        CString::new(old_root_path).expect("failed to convert .old_root path to CString");
+
+    let result = unsafe {
+        let put_old = old_root_cstr.as_ptr();
+        syscall!(Sysno::pivot_root, new_root_ptr, put_old)
+    };
+    if let Err(err) = result {
+        println!("Error calling pivot_root: {:?}", err);
+        return err.into_raw();
+    }
+
+    // Change working directory to / in the new root
+    std::env::set_current_dir("/").expect("failed to change working directory");
+
+    // Unmount the old root and remove the directory
+    let result = unsafe {
+        let target = c".old_root".as_ptr();
+        let flags = libc::MNT_DETACH;
+        syscall!(Sysno::umount2, target, flags)
+    };
+    if let Err(err) = result {
+        println!("Error unmounting old root: {:?}", err);
+        return err.into_raw();
+    }
+
+    std::fs::remove_dir(".old_root").expect("failed to remove .old_root");
     0
 }
