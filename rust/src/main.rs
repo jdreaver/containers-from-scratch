@@ -147,31 +147,19 @@ fn child_fn(mount_root: PathBuf) -> i32 {
 
     std::fs::remove_dir(".old_root").expect("failed to remove .old_root");
 
-    // Re-mount /proc so we only see the processes in the new PID namespace
-    // let src = c"proc".as_ptr();
-    // let target = c"/proc".as_ptr();
-    // let fstype = c"proc".as_ptr();
-    // let flags = 0;
-    // let data = std::ptr::null();
-    // let result = unsafe {
-    //     libc::mount(src, target, fstype, flags, data)
-    // };
-    // if result < 0 {
-    //     println!("Error mounting /proc: {:?}", std::io::Error::last_os_error());
-    //     return result;
-    // }
-
-    // Print current directory
-    let cwd = std::env::current_dir().expect("failed to get current directory");
-    println!("cwd: {:?}", cwd);
-
-    // List current directory
-    let paths = std::fs::read_dir("./").expect("failed to read ./");
-    println!("Current directory contents:");
-    for path in paths {
-        println!("  {:?}", path);
+    // Mount /proc, which is not shared with the host
+    let src = c"proc".as_ptr();
+    let target = c"/proc".as_ptr();
+    let fstype = c"proc".as_ptr();
+    let flags = 0;
+    let data = std::ptr::null();
+    let result = unsafe {
+        libc::mount(src, target, fstype, flags, data)
+    };
+    if result < 0 {
+        println!("Error mounting /proc: {:?}", std::io::Error::last_os_error());
+        return result;
     }
-    println!();
 
     // Exec the shell
     let result = unsafe {
