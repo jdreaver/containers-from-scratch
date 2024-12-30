@@ -210,6 +210,8 @@ fn set_up_networking(child_pid: usize) {
 
     let veth_host = "veth0";
     let veth_child = "veth1";
+    let host_ip = "192.168.43.1";
+    let container_ip = "192.168.43.2";
 
     let setup_script = format!(
         r#"
@@ -223,9 +225,14 @@ fn set_up_networking(child_pid: usize) {
         ip link set {veth_host} up
         nsenter --net=/proc/{child_pid}/ns/net ip link set {veth_child} up
 
-        # Assign IP addresses (optional)
-        ip addr add 192.168.1.1/24 dev {veth_host}
-        nsenter --net=/proc/{child_pid}/ns/net ip addr add 192.168.1.2/24 dev {veth_child}
+        # Assign IP addresses
+        ip addr add {host_ip}/24 dev {veth_host}
+        nsenter --net=/proc/{child_pid}/ns/net ip addr add {container_ip}/24 dev {veth_child}
+
+        # Set up NAT
+        internet_device=$(ip -j route show default 0.0.0.0/0 | jq -r '.[0].dev')
+        iptables -t nat -A POSTROUTING -o "$internet_device" -j MASQUERADE
+        nsenter --net=/proc/{child_pid}/ns/net ip route add default via {host_ip}
         "#
     );
 
