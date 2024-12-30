@@ -57,8 +57,9 @@ PING 8.8.8.8 (8.8.8.8): 56 data bytes
 --- 8.8.8.8 ping statistics ---
 1 packets transmitted, 1 packets received, 0% packet loss
 round-trip min/avg/max = 12.025/12.025/12.025 ms
-/ #
+/ # exit
 waitpid returned: 55365, status: 0
+```
 
 Commands on host:
 
