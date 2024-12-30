@@ -3,4 +3,5 @@
 set -euo pipefail
 
 cd rust/
-exec cargo run contained -- "$@"
+cargo build
+sudo ./target/debug/contained "$@"

@@ -1,9 +1,10 @@
-use syscalls::{Sysno, syscall};
+use syscalls::{syscall, Sysno};
 
 fn main() {
     // Spawn a new process using the clone3 syscall
+    let flags = libc::CLONE_NEWUTS;
     let mut args = CloneArgs {
-        flags: 0,
+        flags: flags as u64,
         pidfd: 0,
         child_tid: 0,
         parent_tid: 0,
@@ -18,8 +19,6 @@ fn main() {
     let args_ptr: usize = &mut args as *mut _ as usize;
 
     let result = unsafe { syscall!(Sysno::clone3, args_ptr, std::mem::size_of::<CloneArgs>()) };
-
-    println!("clone3 returned: {:?}", result);
 
     match result {
         Ok(0) => {
@@ -57,7 +56,24 @@ struct CloneArgs {
     cgroup: u64,       /* File descriptor for target cgroup of child (since Linux 5.7) */
 }
 
-fn child_fn() -> isize {
-    println!("Hello from the child process!");
-    0
+const SHELL_PATH: &str = "/bin/sh\0";
+
+fn child_fn() -> i32 {
+    println!("Running shell inside container...");
+
+    let result = unsafe {
+        let path_ptr = SHELL_PATH.as_ptr();
+        syscall!(Sysno::execve, path_ptr, 0, 0)
+    };
+
+    match result {
+        Ok(_) => {
+            println!("Shell exited successfully");
+            0
+        }
+        Err(err) => {
+            println!("Error running shell: {:?}", err);
+            err.into_raw()
+        }
+    }
 }
