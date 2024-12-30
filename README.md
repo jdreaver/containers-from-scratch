@@ -69,7 +69,6 @@ arnor
 
 ## TODO
 
-- sysfs as read-only
 - Cgroup namespace
 - User namespace
 - Drop capabilities and run as non-root user

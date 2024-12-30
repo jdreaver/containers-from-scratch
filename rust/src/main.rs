@@ -98,6 +98,18 @@ fn child_fn(mount_root: PathBuf) -> i32 {
         return result;
     }
 
+    // Mount sysfs as read only
+    let src = c"sysfs".as_ptr();
+    let target = c"/sys".as_ptr();
+    let fstype = c"sysfs".as_ptr();
+    let flags = libc::MS_RDONLY;
+    let data = std::ptr::null();
+    let result = unsafe { libc::mount(src, target, fstype, flags, data) };
+    if result < 0 {
+        println!("Error mounting /sys: {:?}", std::io::Error::last_os_error());
+        return result;
+    }
+
     // Exec the shell
     let result = unsafe {
         let path_ptr = c"/bin/sh".as_ptr();
