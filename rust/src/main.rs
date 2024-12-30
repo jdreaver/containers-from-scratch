@@ -2,7 +2,7 @@ use syscalls::{syscall, Sysno};
 
 fn main() {
     // Spawn a new process using the clone3 syscall
-    let flags = libc::CLONE_NEWUTS;
+    let flags = libc::CLONE_NEWUTS | libc::CLONE_NEWPID | libc::CLONE_NEWNS; // | libc::CLONE_NEWNET;
     let mut args = CloneArgs {
         flags: flags as u64,
         pidfd: 0,
@@ -56,13 +56,26 @@ struct CloneArgs {
     cgroup: u64,       /* File descriptor for target cgroup of child (since Linux 5.7) */
 }
 
-const SHELL_PATH: &str = "/bin/sh\0";
-
 fn child_fn() -> i32 {
     println!("Running shell inside container...");
 
+    // Re-mount /proc so we only see the processes in the new PID namespace
+    let src = c"/proc".as_ptr();
+    let target = c"/proc".as_ptr();
+    let fstype = c"proc".as_ptr();
+    let flags = libc::MS_BIND;
+    let data = std::ptr::null();
     let result = unsafe {
-        let path_ptr = SHELL_PATH.as_ptr();
+        libc::mount(src, target, fstype, flags, data)
+    };
+    if result < 0 {
+        println!("Error mounting /proc: {:?}", std::io::Error::last_os_error());
+        return result;
+    }
+
+    // Exec the shell
+    let result = unsafe {
+        let path_ptr = c"/bin/sh".as_ptr();
         syscall!(Sysno::execve, path_ptr, 0, 0)
     };
 
