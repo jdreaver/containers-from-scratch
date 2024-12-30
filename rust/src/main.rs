@@ -173,20 +173,13 @@ fn child_fn(mount_root: PathBuf) -> i32 {
     }
     println!();
 
-    // TODO: This works, but execve doesn't work. Getting "applet not found",
-    // which probably means env is broken.
-    std::process::Command::new("/bin/sh")
-        .env("PATH", "/bin:/sbin:/usr/bin:/usr/sbin")
-        .status()
-        .expect("Failed to run /bin/sh");
-
-    // Sleep for a while (for debugging)
-    // std::thread::sleep(std::time::Duration::from_secs(4000));
-
     // Exec the shell
     let result = unsafe {
         let path_ptr = c"/bin/sh".as_ptr();
-        let args: [*const i8; 1] = [std::ptr::null()];
+        let args = [
+            path_ptr, // argv[0] is the program name
+            std::ptr::null(),
+        ];
         let env = [
             c"PATH=/bin:/sbin:/usr/bin:/usr/sbin".as_ptr(),
             std::ptr::null(),
@@ -194,16 +187,9 @@ fn child_fn(mount_root: PathBuf) -> i32 {
         syscall!(Sysno::execve, path_ptr, args.as_ptr(), env.as_ptr())
     };
 
-    match result {
-        Ok(_) => {
-            // TODO: I don't think execve ever returns unless there is an error,
-            // so this is dead code.
-            println!("Shell exited successfully");
-            0
-        }
-        Err(err) => {
-            println!("Error running shell: {:?}", err);
-            err.into_raw()
-        }
+    if let Err(err) = result {
+        println!("Error running shell: {:?}", err);
+        return err.into_raw();
     }
+    0
 }
