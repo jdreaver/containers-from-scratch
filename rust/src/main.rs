@@ -145,6 +145,8 @@ fn child_fn(mount_root: PathBuf) -> i32 {
         return err.into_raw();
     }
 
+    std::fs::remove_dir(".old_root").expect("failed to remove .old_root");
+
     // Re-mount /proc so we only see the processes in the new PID namespace
     // let src = c"proc".as_ptr();
     // let target = c"/proc".as_ptr();
@@ -171,14 +173,31 @@ fn child_fn(mount_root: PathBuf) -> i32 {
     }
     println!();
 
+    // TODO: This works, but execve doesn't work. Getting "applet not found",
+    // which probably means env is broken.
+    std::process::Command::new("/bin/sh")
+        .env("PATH", "/bin:/sbin:/usr/bin:/usr/sbin")
+        .status()
+        .expect("Failed to run /bin/sh");
+
+    // Sleep for a while (for debugging)
+    // std::thread::sleep(std::time::Duration::from_secs(4000));
+
     // Exec the shell
     let result = unsafe {
         let path_ptr = c"/bin/sh".as_ptr();
-        syscall!(Sysno::execve, path_ptr, 0, 0)
+        let args: [*const i8; 1] = [std::ptr::null()];
+        let env = [
+            c"PATH=/bin:/sbin:/usr/bin:/usr/sbin".as_ptr(),
+            std::ptr::null(),
+        ];
+        syscall!(Sysno::execve, path_ptr, args.as_ptr(), env.as_ptr())
     };
 
     match result {
         Ok(_) => {
+            // TODO: I don't think execve ever returns unless there is an error,
+            // so this is dead code.
             println!("Shell exited successfully");
             0
         }
