@@ -1,6 +1,21 @@
+use std::ffi::CString;
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
+
+use clap::Parser;
 use syscalls::{syscall, Sysno};
 
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// Location of the root filesystem to mount (host location; it will always mount to / in the container)
+    #[arg(short, long, value_name = "FILE")]
+    mount_root: PathBuf,
+}
+
 fn main() {
+    let cli = Cli::parse();
+
     // Spawn a new process using the clone3 syscall
     let flags = libc::CLONE_NEWUTS | libc::CLONE_NEWPID | libc::CLONE_NEWNS; // | libc::CLONE_NEWNET;
     let mut args = CloneArgs {
@@ -23,7 +38,7 @@ fn main() {
     match result {
         Ok(0) => {
             // We are in the child process
-            child_fn();
+            child_fn(cli.mount_root);
         }
         Ok(pid) => {
             // We are in the parent process
@@ -56,22 +71,105 @@ struct CloneArgs {
     cgroup: u64,       /* File descriptor for target cgroup of child (since Linux 5.7) */
 }
 
-fn child_fn() -> i32 {
+fn child_fn(mount_root: PathBuf) -> i32 {
     println!("Running shell inside container...");
 
-    // Re-mount /proc so we only see the processes in the new PID namespace
-    let src = c"proc".as_ptr();
-    let target = c"/proc".as_ptr();
-    let fstype = c"proc".as_ptr();
-    let flags = 0;
-    let data = std::ptr::null();
+    // Ensure current root filesystem doesn't have shared propagation
     let result = unsafe {
-        libc::mount(src, target, fstype, flags, data)
+        libc::mount(
+            std::ptr::null(),
+            c"/".as_ptr(),
+            std::ptr::null(),
+            libc::MS_REC | libc::MS_PRIVATE,
+            std::ptr::null(),
+        )
     };
     if result < 0 {
-        println!("Error mounting /proc: {:?}", std::io::Error::last_os_error());
+        println!(
+            "Error setting root filesystem to private
+                {:?}",
+            std::io::Error::last_os_error()
+        );
         return result;
     }
+
+    // Bind mount the root filesystem
+    let mount_root_ptr = mount_root.as_os_str().as_bytes().as_ptr() as *const i8;
+    let fstype = c"none".as_ptr();
+    let flags = libc::MS_BIND | libc::MS_REC;
+    let data = std::ptr::null();
+    let result = unsafe { libc::mount(mount_root_ptr, mount_root_ptr, fstype, flags, data) };
+    if result < 0 {
+        println!(
+            "Error bind mounting root filesystem {:?}: {:?}",
+            mount_root,
+            std::io::Error::last_os_error()
+        );
+        return result;
+    }
+
+    // Create a directory for the old root inside the new root (for pivot_root)
+    let old_root_path = std::path::Path::new(&mount_root).join(".old_root");
+    let old_root_path = old_root_path
+        .to_str()
+        .expect("failed to create .old_root path");
+    std::fs::create_dir_all(old_root_path).expect("failed to create .old_root");
+
+    // Change working directory to the new root
+    std::env::set_current_dir(&mount_root).expect("failed to change working directory");
+
+    // Call pivot_root to switch to the new root
+    let old_root_cstr =
+        CString::new(old_root_path).expect("failed to convert .old_root path to CString");
+
+    let result = unsafe {
+        let put_old = old_root_cstr.as_ptr();
+        syscall!(Sysno::pivot_root, mount_root_ptr, put_old)
+    };
+    if let Err(err) = result {
+        println!("Error calling pivot_root: {:?}", err);
+        return err.into_raw();
+    }
+
+    // Change working directory to / in the new root
+    std::env::set_current_dir("/").expect("failed to change working directory");
+
+    // Unmount the old root and remove the directory
+    let result = unsafe {
+        let target = c".old_root".as_ptr();
+        let flags = libc::MNT_DETACH;
+        syscall!(Sysno::umount2, target, flags)
+    };
+    if let Err(err) = result {
+        println!("Error unmounting old root: {:?}", err);
+        return err.into_raw();
+    }
+
+    // Re-mount /proc so we only see the processes in the new PID namespace
+    // let src = c"proc".as_ptr();
+    // let target = c"/proc".as_ptr();
+    // let fstype = c"proc".as_ptr();
+    // let flags = 0;
+    // let data = std::ptr::null();
+    // let result = unsafe {
+    //     libc::mount(src, target, fstype, flags, data)
+    // };
+    // if result < 0 {
+    //     println!("Error mounting /proc: {:?}", std::io::Error::last_os_error());
+    //     return result;
+    // }
+
+    // Print current directory
+    let cwd = std::env::current_dir().expect("failed to get current directory");
+    println!("cwd: {:?}", cwd);
+
+    // List current directory
+    let paths = std::fs::read_dir("./").expect("failed to read ./");
+    println!("Current directory contents:");
+    for path in paths {
+        println!("  {:?}", path);
+    }
+    println!();
 
     // Exec the shell
     let result = unsafe {

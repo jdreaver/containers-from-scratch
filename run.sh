@@ -27,12 +27,11 @@ if [ "$expected_sha" != "$actual_sha" ]; then
 fi
 
 # Extract the minirootfs
-output_directory="alpine/alpine-minirootfs"
-rm -rf "$output_directory"
-mkdir -p "$output_directory"
+mount_root_directory="$(pwd)/alpine/alpine-minirootfs"
+rm -rf "$mount_root_directory"
+mkdir -p "$mount_root_directory"
 tar -xzf "$output_file" -C alpine/alpine-minirootfs
 
 # Build and run Rust code
-cd rust/
-cargo build
-sudo ./target/debug/contained "$@"
+(cd rust/ && cargo build)
+sudo ./rust/target/debug/contained --mount-root "$mount_root_directory"
