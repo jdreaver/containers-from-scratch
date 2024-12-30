@@ -1,3 +1,5 @@
+use syscalls::{Sysno, syscall};
+
 fn main() {
     // Spawn a new process using the clone3 syscall
     let mut args = CloneArgs {
@@ -13,26 +15,18 @@ fn main() {
         set_tid_size: 0,
         cgroup: 0,
     };
+    let args_ptr: usize = &mut args as *mut _ as usize;
 
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_clone3,
-            &mut args as *mut _ as u64,
-            std::mem::size_of::<CloneArgs>() as u64,
-        )
-    };
+    let result = unsafe { syscall!(Sysno::clone3, args_ptr, std::mem::size_of::<CloneArgs>()) };
 
     println!("clone3 returned: {:?}", result);
 
     match result {
-        -1 => {
-            println!("Error spawning child process: {:?}", result);
-        }
-        0 => {
+        Ok(0) => {
             // We are in the child process
             child_fn();
         }
-        pid => {
+        Ok(pid) => {
             // We are in the parent process
             println!("Spawned child process with PID: {}", pid);
 
@@ -41,6 +35,9 @@ fn main() {
             let options = 0;
             let result = unsafe { libc::waitpid(pid as i32, &mut status, options) };
             println!("waitpid returned: {:?}, status: {:?}", result, status);
+        }
+        Err(err) => {
+            println!("Error spawning child process: {:?}", err);
         }
     }
 }
@@ -62,9 +59,5 @@ struct CloneArgs {
 
 fn child_fn() -> isize {
     println!("Hello from the child process!");
-
-    // Sleep for a bit
-    std::thread::sleep(std::time::Duration::from_secs(3));
-
     0
 }
