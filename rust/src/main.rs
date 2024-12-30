@@ -60,10 +60,10 @@ fn child_fn() -> i32 {
     println!("Running shell inside container...");
 
     // Re-mount /proc so we only see the processes in the new PID namespace
-    let src = c"/proc".as_ptr();
+    let src = c"proc".as_ptr();
     let target = c"/proc".as_ptr();
     let fstype = c"proc".as_ptr();
-    let flags = libc::MS_BIND;
+    let flags = 0;
     let data = std::ptr::null();
     let result = unsafe {
         libc::mount(src, target, fstype, flags, data)
