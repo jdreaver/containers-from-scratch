@@ -64,6 +64,7 @@ waitpid returned: 55365, status: 0
 Commands on host:
 
 ```sh
+# Hostname is unchanged, even when changed in the host (UTS namespace)
 $ hostname
 arnor
 ```
